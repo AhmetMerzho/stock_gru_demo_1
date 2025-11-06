@@ -1,15 +1,72 @@
-const getTF = (() => {
-  let cached = null;
-  return () => {
-    if (cached) return cached;
-    const tfInstance = globalThis?.tf;
-    if (!tfInstance) {
-      throw new Error('TensorFlow.js (tf) is not available. Ensure the tf.min.js script tag loads before app modules.');
-    }
-    cached = tfInstance;
-    return cached;
-  };
-})();
+const TF_CDN_URL = 'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.13.0/dist/tf.min.js';
+
+const getTF = async () => {
+  if (typeof globalThis === 'undefined') {
+    throw new Error('TensorFlow.js requires a browser environment.');
+  }
+
+  if (typeof document === 'undefined') {
+    throw new Error('TensorFlow.js requires a DOM to load its script.');
+  }
+
+  if (!globalThis.__tfReadyPromise) {
+    globalThis.__tfReadyPromise = new Promise((resolve, reject) => {
+      if (globalThis.tf && typeof globalThis.tf.ready === 'function') {
+        globalThis.tf
+          .ready()
+          .then(() => resolve(globalThis.tf))
+          .catch(reject);
+        return;
+      }
+
+      const existing = Array.from(document.scripts).find((script) => script.src.includes('@tensorflow/tfjs'));
+      const targetScript = existing ?? document.createElement('script');
+      const cleanup = () => {
+        targetScript.removeEventListener('load', handleLoad);
+        targetScript.removeEventListener('error', handleError);
+      };
+
+      function handleLoad() {
+        cleanup();
+        targetScript.dataset.tfReady = 'true';
+        if (globalThis.tf && typeof globalThis.tf.ready === 'function') {
+          globalThis.tf
+            .ready()
+            .then(() => resolve(globalThis.tf))
+            .catch(reject);
+        } else {
+          reject(new Error('TensorFlow.js script loaded but tf was not found on the global scope.'));
+        }
+      }
+
+      function handleError(event) {
+        cleanup();
+        reject(new Error(`Unable to load TensorFlow.js script: ${event?.message ?? 'network error'}`));
+      }
+
+      if (!existing) {
+        targetScript.defer = false;
+        targetScript.async = false;
+        targetScript.src = TF_CDN_URL;
+        targetScript.crossOrigin = 'anonymous';
+        targetScript.integrity = 'sha384-uE1YKKcf9zmXLh4FfLLRj1NfX3YAcaqpK+IylCvWbyevnED8GB5blzm0qrx+tr4V';
+        targetScript.addEventListener('load', handleLoad, { once: true });
+        targetScript.addEventListener('error', handleError, { once: true });
+        targetScript.dataset.tfReady = 'loading';
+        document.head.appendChild(targetScript);
+      } else {
+        existing.dataset.tfReady = existing.dataset.tfReady ?? 'loading';
+        existing.addEventListener('load', handleLoad, { once: true });
+        existing.addEventListener('error', handleError, { once: true });
+        if (existing.dataset.tfReady === 'true' || globalThis.tf) {
+          handleLoad();
+        }
+      }
+    });
+  }
+
+  return globalThis.__tfReadyPromise;
+};
 
 export class DataLoader {
   constructor(options = {}) {
@@ -29,6 +86,10 @@ export class DataLoader {
     if (!(file instanceof File)) {
       throw new Error('A valid File object is required.');
     }
+    cached = tfInstance;
+    return cached;
+  };
+})();
 
     const text = await file.text();
     this.#parseCSV(text);
@@ -53,7 +114,7 @@ export class DataLoader {
     dataset.y_test?.dispose();
   }
 
-  prepareDataset() {
+  async prepareDataset() {
     if (this.symbols.length === 0 || this.dates.length === 0) {
       throw new Error('Load a CSV file before preparing the dataset.');
     }
@@ -69,7 +130,7 @@ export class DataLoader {
     const featureSize = this.sequenceLength * this.symbols.length * this.featureCountPerStock;
     const labelSize = this.symbols.length * this.horizon;
 
-    const tf = getTF();
+    const tf = await getTF();
 
     const X_train = tf.tensor3d(
       this.#flatten(split.train.inputs, featureSize),

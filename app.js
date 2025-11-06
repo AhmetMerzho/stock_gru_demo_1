@@ -98,16 +98,16 @@ async function trainModel() {
 
   logStatus('Preparing dataset...');
   try {
-    dataset = dataLoader.prepareDataset();
+    dataset = await dataLoader.prepareDataset();
   } catch (error) {
-    disableControls();
+    enableTrainingControls();
     logStatus(`Dataset error: ${error.message}`);
     console.error(error);
     return;
   }
 
   if (model) {
-    model.dispose();
+    await model.dispose();
     model = null;
   }
 
@@ -117,6 +117,15 @@ async function trainModel() {
     stockCount: dataset.stockSymbols.length,
     horizon: dataset.horizon,
   });
+
+  try {
+    await model.ready();
+  } catch (error) {
+    logStatus(`Model initialization error: ${error.message}`);
+    console.error(error);
+    enableTrainingControls();
+    return;
+  }
 
   const epochs = Number.parseInt(dom.epochsInput.value, 10) || 30;
   const batchSize = Number.parseInt(dom.batchSizeInput.value, 10) || 32;
@@ -158,8 +167,8 @@ async function evaluateModel() {
 
   let predictionTensor;
   try {
-    predictionTensor = model.predict(dataset.X_test);
-    const stockAccuracies = model.evaluateStockAccuracies(dataset.y_test, predictionTensor);
+    predictionTensor = await model.predict(dataset.X_test);
+    const stockAccuracies = await model.evaluateStockAccuracies(dataset.y_test, predictionTensor);
     const predictions = await predictionTensor.array();
     const groundTruth = await dataset.y_test.array();
     renderAccuracyChart(dataset.stockSymbols, stockAccuracies);

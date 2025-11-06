@@ -1,15 +1,72 @@
-const getTF = (() => {
-  let cached = null;
-  return () => {
-    if (cached) return cached;
-    const tfInstance = globalThis?.tf;
-    if (!tfInstance) {
-      throw new Error('TensorFlow.js (tf) is not available. Ensure the tf.min.js script tag loads before app modules.');
-    }
-    cached = tfInstance;
-    return cached;
-  };
-})();
+const TF_CDN_URL = 'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.13.0/dist/tf.min.js';
+
+const getTF = async () => {
+  if (typeof globalThis === 'undefined') {
+    throw new Error('TensorFlow.js requires a browser environment.');
+  }
+
+  if (typeof document === 'undefined') {
+    throw new Error('TensorFlow.js requires a DOM to load its script.');
+  }
+
+  if (!globalThis.__tfReadyPromise) {
+    globalThis.__tfReadyPromise = new Promise((resolve, reject) => {
+      if (globalThis.tf && typeof globalThis.tf.ready === 'function') {
+        globalThis.tf
+          .ready()
+          .then(() => resolve(globalThis.tf))
+          .catch(reject);
+        return;
+      }
+
+      const existing = Array.from(document.scripts).find((script) => script.src.includes('@tensorflow/tfjs'));
+      const targetScript = existing ?? document.createElement('script');
+      const cleanup = () => {
+        targetScript.removeEventListener('load', handleLoad);
+        targetScript.removeEventListener('error', handleError);
+      };
+
+      function handleLoad() {
+        cleanup();
+        targetScript.dataset.tfReady = 'true';
+        if (globalThis.tf && typeof globalThis.tf.ready === 'function') {
+          globalThis.tf
+            .ready()
+            .then(() => resolve(globalThis.tf))
+            .catch(reject);
+        } else {
+          reject(new Error('TensorFlow.js script loaded but tf was not found on the global scope.'));
+        }
+      }
+
+      function handleError(event) {
+        cleanup();
+        reject(new Error(`Unable to load TensorFlow.js script: ${event?.message ?? 'network error'}`));
+      }
+
+      if (!existing) {
+        targetScript.defer = false;
+        targetScript.async = false;
+        targetScript.src = TF_CDN_URL;
+        targetScript.crossOrigin = 'anonymous';
+        targetScript.integrity = 'sha384-uE1YKKcf9zmXLh4FfLLRj1NfX3YAcaqpK+IylCvWbyevnED8GB5blzm0qrx+tr4V';
+        targetScript.addEventListener('load', handleLoad, { once: true });
+        targetScript.addEventListener('error', handleError, { once: true });
+        targetScript.dataset.tfReady = 'loading';
+        document.head.appendChild(targetScript);
+      } else {
+        existing.dataset.tfReady = existing.dataset.tfReady ?? 'loading';
+        existing.addEventListener('load', handleLoad, { once: true });
+        existing.addEventListener('error', handleError, { once: true });
+        if (existing.dataset.tfReady === 'true' || globalThis.tf) {
+          handleLoad();
+        }
+      }
+    });
+  }
+
+  return globalThis.__tfReadyPromise;
+};
 
 export class StockGRUModel {
   constructor(config = {}) {
@@ -19,15 +76,14 @@ export class StockGRUModel {
     this.horizon = config.horizon ?? 3;
     this.learningRate = config.learningRate ?? 1e-3;
 
-    this.model = this.#buildModel(config);
+    this.modelPromise = this.#buildModel(config);
   }
 
-  #buildModel(config) {
+  async #buildModel(config) {
+    const tf = await getTF();
     const unitsFirst = config.unitsFirst ?? 128;
     const unitsSecond = config.unitsSecond ?? 64;
     const dropoutRate = config.dropoutRate ?? 0.2;
-
-    const tf = getTF();
 
     const model = tf.sequential();
     model.add(
@@ -65,7 +121,15 @@ export class StockGRUModel {
     return model;
   }
 
+  async ready() {
+    if (!this.modelPromise) {
+      throw new Error('Model was disposed.');
+    }
+    return this.modelPromise;
+  }
+
   async train(X_train, y_train, options = {}) {
+    const model = await this.ready();
     const trainOptions = {
       epochs: options.epochs ?? 30,
       batchSize: options.batchSize ?? 32,
@@ -74,19 +138,18 @@ export class StockGRUModel {
       callbacks: this.#buildCallbacks(options.callbacks ?? {}),
     };
 
-    getTF();
-    return this.model.fit(X_train, y_train, trainOptions);
+    return model.fit(X_train, y_train, trainOptions);
   }
 
   #buildCallbacks(callbackConfig) {
     const { onEpochEnd, onTrainBegin, onTrainEnd } = callbackConfig;
-    const tf = getTF();
     return {
       onTrainBegin: async (logs) => {
         if (onTrainBegin) await onTrainBegin(logs ?? {});
       },
       onEpochEnd: async (epoch, logs) => {
         if (onEpochEnd) await onEpochEnd(epoch, logs ?? {});
+        const tf = await getTF();
         await tf.nextFrame();
       },
       onTrainEnd: async (logs) => {
@@ -95,13 +158,13 @@ export class StockGRUModel {
     };
   }
 
-  predict(inputs) {
-    getTF();
-    return this.model.predict(inputs);
+  async predict(inputs) {
+    const model = await this.ready();
+    return model.predict(inputs);
   }
 
-  evaluateStockAccuracies(yTrue, yPred) {
-    const tf = getTF();
+  async evaluateStockAccuracies(yTrue, yPred) {
+    const tf = await getTF();
     return tf.tidy(() => {
       const predTensor = yPred instanceof tf.Tensor ? yPred : tf.tensor(yPred);
       const trueTensor = yTrue instanceof tf.Tensor ? yTrue : tf.tensor(yTrue);
@@ -119,11 +182,12 @@ export class StockGRUModel {
     });
   }
 
-  dispose() {
-    getTF();
-    if (this.model) {
-      this.model.dispose();
-      this.model = null;
+  async dispose() {
+    if (!this.modelPromise) return;
+    const model = await this.modelPromise.catch(() => null);
+    if (model) {
+      model.dispose();
     }
+    this.modelPromise = null;
   }
 }

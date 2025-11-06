@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Stock Prediction Demo</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .container { max-width: 1200px; margin: 0 auto; }
+        .controls { margin: 20px 0; }
+        .progress { margin: 10px 0; }
+        .charts { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        .stock-chart { margin: 20px 0; }
+        canvas { max-width: 100%; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Multi-Stock GRU Prediction Demo</h1>
+        
+        <div class="controls">
+            <input type="file" id="csvFile" accept=".csv">
+            <button id="trainBtn" disabled>Train Model</button>
+            <button id="predictBtn" disabled>Run Prediction</button>
+        </div>
+
+        <div class="progress">
+            <div id="status">Upload CSV file to begin</div>
+            <progress id="trainingProgress" value="0" max="100" style="width: 100%;"></progress>
+        </div>
+
+        <div class="charts">
+            <div>
+                <h3>Stock Accuracy Ranking</h3>
+                <canvas id="accuracyChart"></canvas>
+            </div>
+            <div>
+                <h3>Prediction Timeline</h3>
+                <div id="timelineContainer"></div>
+            </div>
+        </div>
+    </div>
+
+    <script type="module" src="data-loader.js"></script>
+    <script type="module" src="gru.js"></script>
+    <script type="module" src="app.js"></script>
+</body>
+</html>

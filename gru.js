@@ -1,115 +1,129 @@
-class GRUModel {
-    constructor(inputShape, outputSize) {
-        this.model = null;
-        this.inputShape = inputShape;
-        this.outputSize = outputSize;
-        this.history = null;
+const getTF = (() => {
+  let cached = null;
+  return () => {
+    if (cached) return cached;
+    const tfInstance = globalThis?.tf;
+    if (!tfInstance) {
+      throw new Error('TensorFlow.js (tf) is not available. Ensure the tf.min.js script tag loads before app modules.');
     }
+    cached = tfInstance;
+    return cached;
+  };
+})();
 
-    buildModel() {
-        this.model = tf.sequential({
-            layers: [
-                tf.layers.gru({
-                    units: 64,
-                    returnSequences: true,
-                    inputShape: this.inputShape
-                }),
-                tf.layers.dropout({ rate: 0.2 }),
-                tf.layers.gru({
-                    units: 32,
-                    returnSequences: false
-                }),
-                tf.layers.dropout({ rate: 0.2 }),
-                tf.layers.dense({
-                    units: this.outputSize,
-                    activation: 'sigmoid'
-                })
-            ]
-        });
+export class StockGRUModel {
+  constructor(config = {}) {
+    this.sequenceLength = config.sequenceLength ?? 12;
+    this.featureCount = config.featureCount ?? 20;
+    this.stockCount = config.stockCount ?? 10;
+    this.horizon = config.horizon ?? 3;
+    this.learningRate = config.learningRate ?? 1e-3;
 
-        this.model.compile({
-            optimizer: tf.train.adam(0.001),
-            loss: 'binaryCrossentropy',
-            metrics: ['binaryAccuracy']
-        });
+    this.model = this.#buildModel(config);
+  }
 
-        return this.model;
+  #buildModel(config) {
+    const unitsFirst = config.unitsFirst ?? 128;
+    const unitsSecond = config.unitsSecond ?? 64;
+    const dropoutRate = config.dropoutRate ?? 0.2;
+
+    const tf = getTF();
+
+    const model = tf.sequential();
+    model.add(
+      tf.layers.gru({
+        units: unitsFirst,
+        returnSequences: true,
+        inputShape: [this.sequenceLength, this.featureCount],
+        kernelInitializer: 'glorotUniform',
+      })
+    );
+    model.add(tf.layers.dropout({ rate: dropoutRate }));
+    model.add(
+      tf.layers.gru({
+        units: unitsSecond,
+        returnSequences: false,
+        kernelInitializer: 'glorotUniform',
+      })
+    );
+    model.add(tf.layers.dropout({ rate: dropoutRate }));
+    model.add(
+      tf.layers.dense({
+        units: this.stockCount * this.horizon,
+        activation: 'sigmoid',
+        kernelInitializer: 'glorotUniform',
+      })
+    );
+
+    const optimizer = tf.train.adam(this.learningRate);
+    model.compile({
+      optimizer,
+      loss: 'binaryCrossentropy',
+      metrics: ['binaryAccuracy'],
+    });
+
+    return model;
+  }
+
+  async train(X_train, y_train, options = {}) {
+    const trainOptions = {
+      epochs: options.epochs ?? 30,
+      batchSize: options.batchSize ?? 32,
+      validationSplit: options.validationSplit ?? 0.1,
+      shuffle: false,
+      callbacks: this.#buildCallbacks(options.callbacks ?? {}),
+    };
+
+    getTF();
+    return this.model.fit(X_train, y_train, trainOptions);
+  }
+
+  #buildCallbacks(callbackConfig) {
+    const { onEpochEnd, onTrainBegin, onTrainEnd } = callbackConfig;
+    const tf = getTF();
+    return {
+      onTrainBegin: async (logs) => {
+        if (onTrainBegin) await onTrainBegin(logs ?? {});
+      },
+      onEpochEnd: async (epoch, logs) => {
+        if (onEpochEnd) await onEpochEnd(epoch, logs ?? {});
+        await tf.nextFrame();
+      },
+      onTrainEnd: async (logs) => {
+        if (onTrainEnd) await onTrainEnd(logs ?? {});
+      },
+    };
+  }
+
+  predict(inputs) {
+    getTF();
+    return this.model.predict(inputs);
+  }
+
+  evaluateStockAccuracies(yTrue, yPred) {
+    const tf = getTF();
+    return tf.tidy(() => {
+      const predTensor = yPred instanceof tf.Tensor ? yPred : tf.tensor(yPred);
+      const trueTensor = yTrue instanceof tf.Tensor ? yTrue : tf.tensor(yTrue);
+
+      const binaryPred = predTensor.greaterEqual(0.5).toInt();
+      const trueBinary = trueTensor.round().toInt();
+
+      const reshapedPred = binaryPred.reshape([-1, this.stockCount, this.horizon]);
+      const reshapedTrue = trueBinary.reshape([-1, this.stockCount, this.horizon]);
+
+      const matchTensor = reshapedPred.equal(reshapedTrue);
+      const accuracyPerStock = matchTensor.mean(2).mean(0);
+      const data = accuracyPerStock.dataSync();
+      return Array.from(data);
+    });
+  }
+
+  dispose() {
+    getTF();
+    if (this.model) {
+      this.model.dispose();
+      this.model = null;
     }
-
-    async train(X_train, y_train, X_test, y_test, epochs = 50, batchSize = 32) {
-        if (!this.model) this.buildModel();
-
-        this.history = await this.model.fit(X_train, y_train, {
-            epochs: epochs,
-            batchSize: batchSize,
-            validationData: [X_test, y_test],
-            callbacks: {
-                onEpochEnd: (epoch, logs) => {
-                    const progress = ((epoch + 1) / epochs) * 100;
-                    const status = `Epoch ${epoch + 1}/${epochs} - loss: ${logs.loss.toFixed(4)}, acc: ${logs.binaryAccuracy.toFixed(4)}, val_loss: ${logs.val_loss.toFixed(4)}, val_acc: ${logs.val_binaryAccuracy.toFixed(4)}`;
-                    
-                    // Update UI
-                    const progressElement = document.getElementById('trainingProgress');
-                    const statusElement = document.getElementById('status');
-                    if (progressElement) progressElement.value = progress;
-                    if (statusElement) statusElement.textContent = status;
-                    
-                    console.log(status);
-                    tf.nextFrame(); // Prevent UI blocking
-                }
-            }
-        });
-
-        return this.history;
-    }
-
-    async predict(X) {
-        if (!this.model) throw new Error('Model not trained');
-        return this.model.predict(X);
-    }
-
-    evaluatePerStock(yTrue, yPred, symbols, horizon = 3) {
-        const yTrueArray = yTrue.arraySync();
-        const yPredArray = yPred.arraySync();
-        const numStocks = symbols.length;
-        
-        const stockAccuracies = {};
-        const stockPredictions = {};
-
-        symbols.forEach((symbol, stockIdx) => {
-            let correct = 0;
-            let total = 0;
-            const predictions = [];
-
-            for (let i = 0; i < yTrueArray.length; i++) {
-                for (let offset = 0; offset < horizon; offset++) {
-                    const targetIdx = stockIdx * horizon + offset;
-                    const trueVal = yTrueArray[i][targetIdx];
-                    const predVal = yPredArray[i][targetIdx] > 0.5 ? 1 : 0;
-                    
-                    if (trueVal === predVal) correct++;
-                    total++;
-                    
-                    predictions.push({
-                        true: trueVal,
-                        pred: predVal,
-                        correct: trueVal === predVal
-                    });
-                }
-            }
-
-            stockAccuracies[symbol] = correct / total;
-            stockPredictions[symbol] = predictions;
-        });
-
-        return { stockAccuracies, stockPredictions };
-    }
-
-    dispose() {
-        if (this.model) {
-            this.model.dispose();
-        }
-    }
+  }
 }
-
-export default GRUModel;

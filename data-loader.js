@@ -86,6 +86,10 @@ export class DataLoader {
     if (!(file instanceof File)) {
       throw new Error('A valid File object is required.');
     }
+    cached = tfInstance;
+    return cached;
+  };
+})();
 
     const text = await file.text();
     this.#parseCSV(text);

@@ -1,3 +1,16 @@
+const getTF = (() => {
+  let cached = null;
+  return () => {
+    if (cached) return cached;
+    const tfInstance = globalThis?.tf;
+    if (!tfInstance) {
+      throw new Error('TensorFlow.js (tf) is not available. Ensure the tf.min.js script tag loads before app modules.');
+    }
+    cached = tfInstance;
+    return cached;
+  };
+})();
+
 export class DataLoader {
   constructor(options = {}) {
     this.sequenceLength = options.sequenceLength ?? 12;
@@ -55,6 +68,8 @@ export class DataLoader {
     const split = this.#splitSamples(inputs, labels, anchorIndices);
     const featureSize = this.sequenceLength * this.symbols.length * this.featureCountPerStock;
     const labelSize = this.symbols.length * this.horizon;
+
+    const tf = getTF();
 
     const X_train = tf.tensor3d(
       this.#flatten(split.train.inputs, featureSize),

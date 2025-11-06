@@ -1,3 +1,16 @@
+const getTF = (() => {
+  let cached = null;
+  return () => {
+    if (cached) return cached;
+    const tfInstance = globalThis?.tf;
+    if (!tfInstance) {
+      throw new Error('TensorFlow.js (tf) is not available. Ensure the tf.min.js script tag loads before app modules.');
+    }
+    cached = tfInstance;
+    return cached;
+  };
+})();
+
 export class StockGRUModel {
   constructor(config = {}) {
     this.sequenceLength = config.sequenceLength ?? 12;
@@ -13,6 +26,8 @@ export class StockGRUModel {
     const unitsFirst = config.unitsFirst ?? 128;
     const unitsSecond = config.unitsSecond ?? 64;
     const dropoutRate = config.dropoutRate ?? 0.2;
+
+    const tf = getTF();
 
     const model = tf.sequential();
     model.add(
@@ -59,11 +74,13 @@ export class StockGRUModel {
       callbacks: this.#buildCallbacks(options.callbacks ?? {}),
     };
 
+    getTF();
     return this.model.fit(X_train, y_train, trainOptions);
   }
 
   #buildCallbacks(callbackConfig) {
     const { onEpochEnd, onTrainBegin, onTrainEnd } = callbackConfig;
+    const tf = getTF();
     return {
       onTrainBegin: async (logs) => {
         if (onTrainBegin) await onTrainBegin(logs ?? {});
@@ -79,10 +96,12 @@ export class StockGRUModel {
   }
 
   predict(inputs) {
+    getTF();
     return this.model.predict(inputs);
   }
 
   evaluateStockAccuracies(yTrue, yPred) {
+    const tf = getTF();
     return tf.tidy(() => {
       const predTensor = yPred instanceof tf.Tensor ? yPred : tf.tensor(yPred);
       const trueTensor = yTrue instanceof tf.Tensor ? yTrue : tf.tensor(yTrue);
@@ -101,6 +120,7 @@ export class StockGRUModel {
   }
 
   dispose() {
+    getTF();
     if (this.model) {
       this.model.dispose();
       this.model = null;

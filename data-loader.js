@@ -94,6 +94,9 @@ export class DataLoader {
     const text = await file.text();
     this.#parseCSV(text);
 
+    const text = await file.text();
+    this.#parseCSV(text);
+
     if (this.symbols.length === 0 || this.dates.length === 0) {
       throw new Error('No usable records were found in the CSV file.');
     }

@@ -45,19 +45,31 @@ function disposeDataset() {
   }
 }
 
+function setButtonState(button, enabled) {
+  if (!button) return;
+  button.disabled = !enabled;
+  if (enabled) {
+    button.removeAttribute('aria-disabled');
+    button.removeAttribute('disabled');
+  } else {
+    button.setAttribute('aria-disabled', 'true');
+    button.setAttribute('disabled', 'disabled');
+  }
+}
+
 function disableControls() {
-  dom.trainButton.disabled = true;
-  dom.evaluateButton.disabled = true;
+  setButtonState(dom.trainButton, false);
+  setButtonState(dom.evaluateButton, false);
 }
 
 function enableTrainingControls() {
-  dom.trainButton.disabled = false;
-  dom.evaluateButton.disabled = true;
+  setButtonState(dom.trainButton, true);
+  setButtonState(dom.evaluateButton, false);
 }
 
 function enableEvaluationControls() {
-  dom.trainButton.disabled = false;
-  dom.evaluateButton.disabled = false;
+  setButtonState(dom.trainButton, true);
+  setButtonState(dom.evaluateButton, true);
 }
 
 async function handleFileSelection(event) {
